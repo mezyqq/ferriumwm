@@ -1,6 +1,6 @@
 # FerriumWM (FeWM)
 
-Тайлинговый Wayland-композитор на Rust + [Smithay]. Fe — железо, отсылка к Ferris, крабу-талисману Rust.
+Тайлинговый Wayland-композитор на Rust + [Smithay]. 
 
 ## Что умеет
 
