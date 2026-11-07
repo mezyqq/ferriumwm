@@ -33,6 +33,12 @@
   linux-dmabuf, fractional-scale, viewporter, буфер обмена (+primary, data-control),
   pointer-constraints/relative-pointer/gestures, cursor-shape, xdg-activation,
   ext-session-lock (swaylock), X11-приложения через xwayland-satellite.
+- **Скриншоты**: `ext-image-copy-capture-v1` (grim ≥ 1.5, flameshot с `useGrimAdapter=true`),
+  плюс действия `screenshot`, `screenshot-screen`, `screenshot-window`. Копирование
+  фреймбуфера распараллелено по ядрам.
+- **Многоядерность**: тяжёлые CPU-задачи (копирование фреймбуфера при скриншоте,
+  построение dark/light палитры, чтение/рендер/запись шаблонов) выполняются
+  параллельно по всем ядрам; кадр при этом рисуется на GPU в главном потоке.
 - IPC: `fewm msg <действие>`, `fewm msg windows|workspaces|outputs|focused|colors|events`.
 
 ## Запуск
@@ -52,7 +58,6 @@ sudo install -Dm644 resources/ferriumwm.desktop /usr/share/wayland-sessions/ferr
 ## Пока не сделано
 
 - Обзор рабочих столов (`toggle-overview`), анимация закрытия окон.
-- Протокол захвата экрана для grim (скриншоты в сессии FeWM пока не работают).
 - Рабочие столы в баре noctalia (нужна поддержка FeWM-IPC на стороне бара).
 - Несколько GPU (рендер на одном основном).
 

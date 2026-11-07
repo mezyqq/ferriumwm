@@ -12,6 +12,7 @@ mod input;
 mod ipc;
 mod layout;
 mod lock;
+mod parallel;
 mod render;
 mod screenshot;
 mod shell;
@@ -109,6 +110,7 @@ fn main() {
         _ => {}
     }
     init_logging();
+    info!("CPU: {} логических ядер — фоновые задачи распараллелены", parallel::threads());
     let nested = if args.iter().any(|a| a == "--nested" || a == "--winit") {
         true
     } else if args.iter().any(|a| a == "--session" || a == "--tty" || a == "--udev") {

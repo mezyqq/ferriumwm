@@ -135,24 +135,41 @@ impl Fe {
             }
             let dst = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
             let swap = matches!(data.format, wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888);
-            for y in 0..h {
-                let s = &rgba[y * size.w as usize * 4..];
-                let d = &mut dst[base + y * stride..];
-                for x in 0..w {
-                    let (r, g, b, a) = (s[x * 4], s[x * 4 + 1], s[x * 4 + 2], s[x * 4 + 3]);
-                    let o = x * 4;
-                    if swap {
-                        d[o] = b;
-                        d[o + 1] = g;
-                        d[o + 2] = r;
-                    } else {
-                        d[o] = r;
-                        d[o + 1] = g;
-                        d[o + 2] = b;
-                    }
-                    d[o + 3] = a;
-                }
+            if w == 0 || h == 0 {
+                return Ok(());
             }
+            let src_stride = size.w as usize * 4;
+            // Split rows across all available cores: screenshots get faster and
+            // no longer pin a single core while copying a large framebuffer.
+            let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).clamp(1, h);
+            let rows_per = h.div_ceil(workers);
+            let dst = &mut dst[base..base + stride * h];
+            let rgba = rgba.as_slice();
+            std::thread::scope(|scope| {
+                for (chunk_idx, chunk) in dst.chunks_mut(rows_per * stride).enumerate() {
+                    let y0 = chunk_idx * rows_per;
+                    scope.spawn(move || {
+                        for (j, d) in chunk.chunks_mut(stride).enumerate() {
+                            let y = y0 + j;
+                            if y >= h {
+                                break;
+                            }
+                            let s = &rgba[y * src_stride..y * src_stride + w * 4];
+                            if swap {
+                                for x in 0..w {
+                                    let o = x * 4;
+                                    d[o] = s[o + 2];
+                                    d[o + 1] = s[o + 1];
+                                    d[o + 2] = s[o];
+                                    d[o + 3] = s[o + 3];
+                                }
+                            } else {
+                                d[..w * 4].copy_from_slice(&s[..w * 4]);
+                            }
+                        }
+                    });
+                }
+            });
             Ok(())
         })
         .map_err(|e| format!("{e:?}"))?

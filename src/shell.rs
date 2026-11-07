@@ -624,8 +624,10 @@ impl Fe {
             self.workspaces[wsi].layout.add(&ctx, id, focus, cursor);
         }
         self.relayout(ws);
-        if floating && float_rect.w < 2.0 {
-            // let the client choose its size
+        if floating && float_rect.w < 2.0 && !fullscreen && !maximize {
+            // let the client choose its size; fullscreen/maximized windows must
+            // keep the size from relayout (a 0x0 configure with the fullscreen
+            // state set breaks Qt clients such as flameshot's overlay)
             if let Some(t) = self.windows[&id].window.toplevel() {
                 t.with_pending_state(|s| s.size = None);
             }

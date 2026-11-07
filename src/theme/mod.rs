@@ -165,49 +165,87 @@ pub fn apply_templates(cfg: &Config, pal: &Palette, wallpaper: &str) {
         info!("шаблоны цветов пропущены (FEWM_NO_TEMPLATES)");
         return;
     }
-    let mut vars = HashMap::new();
-    vars.insert("image".to_string(), wallpaper.to_string());
-    let mut jobs = Vec::new();
+
+    enum Src {
+        Builtin(&'static str),
+        File(String),
+    }
+    struct Spec {
+        name: String,
+        src: Src,
+        output: String,
+        hook: String,
+        config_dir: String,
+    }
+
+    let mut specs = Vec::new();
     for name in &cfg.theme.builtin_templates {
         let Some((tpl, out, hook)) = builtin(name) else {
             warn!("нет встроенного шаблона {name}");
             continue;
         };
-        let ctx = template::Ctx { palette: pal, vars: vars.clone() };
-        jobs.push(Job {
+        specs.push(Spec {
             name: name.clone(),
-            text: template::render(tpl, &ctx),
-            output: expand_path(out),
-            post_hook: hook.into(),
+            src: Src::Builtin(tpl),
+            output: out.to_string(),
+            hook: hook.to_string(),
+            config_dir: String::new(),
         });
     }
     for t in cfg.theme.templates.iter().filter(|t| t.enabled && !t.input.is_empty() && !t.output.is_empty()) {
         let input = expand_path(&t.input);
-        let mut v = vars.clone();
-        v.insert(
-            "config_dir".into(),
-            input.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
-        );
-        let ctx = template::Ctx { palette: pal, vars: v };
-        let text = std::fs::read_to_string(&input)
-            .map_err(|e| format!("{}: {e}", input.display()))
-            .and_then(|src| template::render(&src, &ctx));
-        let hook = template::render(&t.post_hook, &ctx).unwrap_or_else(|_| t.post_hook.clone());
-        jobs.push(Job { name: t.name.clone(), text, output: expand_path(&t.output), post_hook: hook });
+        let output = expand_path(&t.output);
+        let config_dir = input.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        specs.push(Spec {
+            name: t.name.clone(),
+            src: Src::File(input.to_string_lossy().into_owned()),
+            output: output.to_string_lossy().into_owned(),
+            hook: t.post_hook.clone(),
+            config_dir,
+        });
     }
+
+    let palette = pal.clone();
+    let wallpaper = wallpaper.to_string();
     std::thread::spawn(move || {
-        for job in jobs {
-            match job.text {
+        // Render templates in parallel: reading the files and substituting the
+        // palette are the slow parts when there are many templates.
+        let jobs = crate::parallel::map(specs.len(), |i| {
+            let spec = &specs[i];
+            let mut vars = HashMap::new();
+            vars.insert("image".to_string(), wallpaper.clone());
+            if !spec.config_dir.is_empty() {
+                vars.insert("config_dir".to_string(), spec.config_dir.clone());
+            }
+            let ctx = template::Ctx { palette: &palette, vars };
+            let text = match &spec.src {
+                Src::Builtin(tpl) => template::render(tpl, &ctx),
+                Src::File(path) => std::fs::read_to_string(path)
+                    .map_err(|e| format!("{path}: {e}"))
+                    .and_then(|src| template::render(&src, &ctx)),
+            };
+            let hook = template::render(&spec.hook, &ctx).unwrap_or_else(|_| spec.hook.clone());
+            Job {
+                name: spec.name.clone(),
+                text,
+                output: PathBuf::from(&spec.output),
+                post_hook: hook,
+            }
+        });
+        // Independent output files can be written on all cores too.
+        crate::parallel::for_each(jobs.len(), |i| {
+            let job = &jobs[i];
+            match &job.text {
                 Ok(text) => {
                     if let Some(dir) = job.output.parent() {
                         let _ = std::fs::create_dir_all(dir);
                     }
                     if std::fs::read_to_string(&job.output).ok().as_deref() == Some(text.as_str()) {
-                        continue;
+                        return;
                     }
                     if let Err(e) = std::fs::write(&job.output, text) {
                         warn!("шаблон {}: {e}", job.name);
-                        continue;
+                        return;
                     }
                     if !job.post_hook.is_empty() {
                         let _ = Command::new("sh").arg("-c").arg(&job.post_hook).spawn().map(|mut c| {
@@ -217,7 +255,7 @@ pub fn apply_templates(cfg: &Config, pal: &Palette, wallpaper: &str) {
                 }
                 Err(e) => warn!("шаблон {}: {e}", job.name),
             }
-        }
+        });
         info!("шаблоны цветов применены");
     });
 }

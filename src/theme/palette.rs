@@ -59,8 +59,10 @@ impl Palette {
 
     pub fn from_source(source: Rgb8, scheme: &str, is_dark: bool, contrast: f64) -> Palette {
         let src = Rgb::new(source.0, source.1, source.2);
-        let dark = build(src, scheme, true, contrast);
-        let light = build(src, scheme, false, contrast);
+        // dark and light schemes are independent: build them on two cores
+        let mut schemes = crate::parallel::map(2, |i| build(src, scheme, i == 0, contrast));
+        let light = schemes.pop().unwrap();
+        let dark = schemes.pop().unwrap();
         Palette { source, dark, light, is_dark }
     }
 
