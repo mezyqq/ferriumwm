@@ -1,0 +1,57 @@
+[package]
+name = "ferriumwm"
+version = "0.1.0"
+edition = "2024"
+description = "FerriumWM (FeWM) — tiling Wayland compositor: dwindle/scroller layouts, CSS styling, multi-language configs, wallpaper colors"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "fewm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+xkbcommon = "0.8"
+libc = "0.2"
+regex = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
+material-colors = { version = "0.5", features = ["quantize"] }
+xcursor = "0.3"
+bitflags = "2"
+toml = "0.9"
+
+[dependencies.smithay]
+git = "https://github.com/Smithay/smithay.git"
+rev = "65aa86f"
+default-features = false
+features = [
+    "desktop",
+    "wayland_frontend",
+    "use_system_lib",
+    "backend_winit",
+    "backend_egl",
+    "renderer_gl",
+    "backend_drm",
+    "backend_gbm",
+    "backend_libinput",
+    "backend_udev",
+    "backend_session_libseat",
+]
+
+[dependencies.smithay-drm-extras]
+git = "https://github.com/Smithay/smithay.git"
+rev = "65aa86f"
+
+[profile.release]
+debug = 1
+lto = "thin"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

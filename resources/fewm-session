@@ -1,0 +1,26 @@
+#!/bin/sh
+# FerriumWM session launcher (TTY or display manager).
+export XDG_CURRENT_DESKTOP=FerriumWM
+export XDG_SESSION_DESKTOP=FerriumWM
+export XDG_SESSION_TYPE=wayland
+export MOZ_ENABLE_WAYLAND=1
+export QT_QPA_PLATFORM="wayland;xcb"
+export QT_QPA_PLATFORMTHEME="${QT_QPA_PLATFORMTHEME:-qt6ct}"
+export SDL_VIDEODRIVER="wayland,x11"
+export ELECTRON_OZONE_PLATFORM_HINT=auto
+export _JAVA_AWT_WM_NONREPARENTING=1
+
+# sddm doesn't put ~/.local/bin on PATH: use the fewm next to this script
+here="$(dirname "$(readlink -f "$0")")"
+FEWM="$here/fewm"
+[ -x "$FEWM" ] || FEWM=fewm
+export PATH="$HOME/.local/bin:$PATH"
+
+log="${XDG_CACHE_HOME:-$HOME/.cache}/FerriumWM/session.log"
+mkdir -p "$(dirname "$log")"
+[ -f "$log" ] && mv -f "$log" "$log.old"
+
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null; then
+    exec dbus-run-session "$FEWM" --session >"$log" 2>&1
+fi
+exec "$FEWM" --session >"$log" 2>&1

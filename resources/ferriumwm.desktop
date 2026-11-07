@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=FerriumWM
+Comment=FeWM — тайлинговый Wayland-композитор (dwindle/scroller, CSS, конфиги на Python/Lua/Bash)
+Exec=/home/mezyq/.local/bin/fewm-session
+Type=Application
+DesktopNames=FerriumWM
