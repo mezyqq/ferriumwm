@@ -40,6 +40,7 @@ const HELP: &str = "FerriumWM (FeWM) — тайлинговый Wayland-комп
   fewm --session       запустить на DRM/KMS (из TTY)
   fewm msg <действие>  отправить действие запущенному FeWM, например: fewm msg workspace 2
   fewm msg windows|workspaces|outputs|focused|colors|config|events
+  fewm pick-source     выбор монитора/окна для записи (вызывает xdg-desktop-portal-wlr)
   fewm import-niri     заново импортировать хоткеи из ~/.config/niri/config.kdl
   fewm sync            перегенерировать config.py/.lua/.sh из самого свежего
   fewm check           проверить конфиги и style.css
@@ -50,6 +51,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("msg") => std::process::exit(ipc::client(&args[1..])),
+        Some("pick-source") => std::process::exit(pick_source()),
         Some("-h" | "--help" | "help") => {
             println!("{HELP}");
             return;
@@ -438,9 +440,52 @@ fn install_portal_config() {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
+        // xdpw runs from systemd, whose PATH may lack ~/.local/bin
+        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "fewm".into());
+        let body = body.replace("chooser_cmd=fewm ", &format!("chooser_cmd={exe} "));
         match std::fs::write(&path, body) {
             Ok(()) => info!("записан {}", path.display()),
             Err(e) => warn!("{}: {e}", path.display()),
         }
     }
+}
+
+/// Screencast source picker for xdg-desktop-portal-wlr (dmenu chooser):
+/// options come on stdin, the chosen line goes to stdout. A single option is
+/// taken without asking; otherwise fuzzel/rofi/wofi shows the list.
+fn pick_source() -> i32 {
+    use std::io::{Read, Write};
+    let mut input = String::new();
+    let _ = std::io::stdin().read_to_string(&mut input);
+    let lines: Vec<&str> = input.lines().filter(|l| !l.trim().is_empty()).collect();
+    match lines.len() {
+        0 => return 0,
+        1 => {
+            println!("{}", lines[0]);
+            return 0;
+        }
+        _ => {}
+    }
+    let menus: [(&str, &[&str]); 3] = [
+        ("fuzzel", &["-d", "-l", "12", "-w", "60", "-p", "Записывать: "]),
+        ("rofi", &["-dmenu", "-p", "Записывать"]),
+        ("wofi", &["-d", "-p", "Записывать"]),
+    ];
+    for (cmd, args) in menus {
+        let child = std::process::Command::new(cmd)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn();
+        let Ok(mut child) = child else { continue };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(lines.join("\n").as_bytes());
+        }
+        let out = child.wait_with_output().map(|o| o.stdout).unwrap_or_default();
+        print!("{}", String::from_utf8_lossy(&out));
+        return 0;
+    }
+    // no menu program: the first monitor
+    println!("{}", lines[0]);
+    0
 }
