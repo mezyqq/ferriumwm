@@ -1,0 +1,5 @@
+# xdg-desktop-portal-wlr under FerriumWM (written by fewm if missing)
+[screencast]
+# monitor or window picker; outputs and windows come from FeWM
+chooser_type=dmenu
+chooser_cmd=fuzzel -d -l 10 -p 'Показать: '

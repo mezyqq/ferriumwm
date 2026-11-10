@@ -49,6 +49,7 @@ pub fn init(event_loop: &mut EventLoop<'static, Fe>, fe: &mut Fe) -> anyhow::Res
         None => fe.dmabuf_state.create_global::<Fe>(&fe.dh, formats),
     };
     fe.dmabuf_global = Some(global);
+    fe.capture.render_node = node;
     if backend.renderer().bind_wl_display(&fe.dh).is_ok() {
         info!("EGL hardware acceleration включён");
     }

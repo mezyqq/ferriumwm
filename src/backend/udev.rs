@@ -257,6 +257,7 @@ fn device_added(fe: &mut Fe, node: DrmNode, path: &Path) -> anyhow::Result<()> {
         Err(_) => fe.dmabuf_state.create_global::<Fe>(&fe.dh, formats),
     };
     fe.dmabuf_global = Some(global);
+    fe.capture.render_node = Some(rnode);
     fe.shm_state.update_formats(renderer.shm_formats());
 
     let u = fe.backend_udev().unwrap();

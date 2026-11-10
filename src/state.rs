@@ -163,10 +163,7 @@ pub struct Fe {
     pub ipc: crate::ipc::Ipc,
     pub session_lock_state: smithay::wayland::session_lock::SessionLockManagerState,
     pub lock: crate::lock::LockState,
-    pub image_capture_source_state: smithay::wayland::image_capture_source::ImageCaptureSourceState,
-    pub output_capture_state: smithay::wayland::image_capture_source::OutputCaptureSourceState,
-    pub image_copy_state: smithay::wayland::image_copy_capture::ImageCopyCaptureState,
-    pub capture_sessions: Vec<smithay::wayland::image_copy_capture::Session>,
+    pub capture: crate::capture::CaptureState,
     pub capture_no_cursor: bool,
 }
 
@@ -306,10 +303,7 @@ impl Fe {
             ipc: Default::default(),
             session_lock_state,
             lock: Default::default(),
-            image_capture_source_state: smithay::wayland::image_capture_source::ImageCaptureSourceState::new(),
-            output_capture_state: smithay::wayland::image_capture_source::OutputCaptureSourceState::new::<Fe>(&dh_c),
-            image_copy_state: smithay::wayland::image_copy_capture::ImageCopyCaptureState::new::<Fe>(&dh_c),
-            capture_sessions: Vec::new(),
+            capture: crate::capture::CaptureState::new(&dh_c),
             capture_no_cursor: false,
         }
     }

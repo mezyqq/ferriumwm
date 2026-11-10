@@ -387,9 +387,12 @@ fn run(nested: bool) -> anyhow::Result<()> {
 
     start_xwayland(&mut fe);
     if !nested {
+        install_portal_config();
         let _ = std::process::Command::new("sh")
             .arg("-c")
-            .arg("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE DISPLAY 2>/dev/null; systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DISPLAY 2>/dev/null")
+            // portals started by an earlier session keep its WAYLAND_DISPLAY: stop them,
+            // D-Bus activation brings them back with ours (screencast for OBS etc.)
+            .arg("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE DISPLAY 2>/dev/null; systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DISPLAY 2>/dev/null; systemctl --user stop xdg-desktop-portal.service xdg-desktop-portal-wlr.service xdg-desktop-portal-gtk.service 2>/dev/null")
             .env("DISPLAY", fe.xwayland_display.clone().unwrap_or_default())
             .spawn();
     }
@@ -413,4 +416,31 @@ fn run(nested: bool) -> anyhow::Result<()> {
     })?;
     let _ = std::fs::remove_file(ipc::socket_path());
     Ok(())
+}
+
+/// Screencast/screenshot portals for FeWM: xdg-desktop-portal-wlr on top of
+/// ext-image-copy-capture. Written once; the user's edits are kept.
+fn install_portal_config() {
+    let Some(cfg) = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+    else {
+        return;
+    };
+    let files = [
+        (cfg.join("xdg-desktop-portal/ferriumwm-portals.conf"), include_str!("../resources/portal/ferriumwm-portals.conf")),
+        (cfg.join("xdg-desktop-portal-wlr/FerriumWM"), include_str!("../resources/portal/xdpw-config")),
+    ];
+    for (path, body) in files {
+        if path.exists() {
+            continue;
+        }
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(&path, body) {
+            Ok(()) => info!("записан {}", path.display()),
+            Err(e) => warn!("{}: {e}", path.display()),
+        }
+    }
 }

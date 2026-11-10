@@ -423,6 +423,7 @@ impl Fe {
         let Some(t) = w.window.toplevel().cloned() else { return };
         if !t.is_initial_configure_sent() {
             self.setup_new_window(id);
+            self.toplevel_list_add(id);
             t.send_configure();
             return;
         }
@@ -447,6 +448,10 @@ impl Fe {
         let changed = app_id != w.app_id || title != w.title;
         w.app_id = app_id;
         w.title = title;
+        if changed {
+            self.toplevel_list_update(id);
+        }
+        let w = self.windows.get_mut(&id).unwrap();
         if !has_buffer && w.mapped {
             // the client hid the window (null buffer, e.g. minimize to tray):
             // take it out of the layout until it maps again
@@ -643,6 +648,7 @@ impl Fe {
 
     pub fn remove_window(&mut self, id: WinId) {
         let Some(w) = self.windows.remove(&id) else { return };
+        self.toplevel_list_remove(id);
         self.space.unmap_elem(&w.window);
         let ws = w.ws;
         let wsi = ws as usize - 1;
@@ -1675,6 +1681,7 @@ impl XdgShellHandler for Fe {
             let w = self.windows.get_mut(&id).unwrap();
             w.app_id = a;
             w.title = t;
+            self.toplevel_list_update(id);
             self.queue_redraw();
         }
     }
