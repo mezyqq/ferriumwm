@@ -84,6 +84,7 @@ pub struct Config {
     pub animations: Animations,
     pub gestures: Gestures,
     pub theme: Theme,
+    pub wallpaper_engine: WallpaperEngine,
     pub cursor: Cursor,
     pub misc: Misc,
     pub binds: BTreeMap<String, String>,
@@ -236,6 +237,53 @@ pub struct Template {
     pub input: String,
     pub output: String,
     pub post_hook: String,
+}
+
+/// Wallpaper Engine (Steam) wallpapers, rendered by linux-wallpaperengine on the background layer.
+/// The wallpaper itself is chosen like any other: theme.wallpaper / outputs[].wallpaper = "we:<workshop id>".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct WallpaperEngine {
+    pub binary: String,
+    pub assets_dir: String,
+    pub fps: u32,
+    pub volume: u32,
+    pub automute: bool,
+    pub audio_reactive: bool,
+    /// default | fill | fit | stretch
+    pub scaling: String,
+    /// clamp | border | repeat
+    pub clamp: String,
+    pub mouse: bool,
+    pub parallax: bool,
+    pub particles: bool,
+    /// fullscreen | windows | never
+    pub pause: String,
+    /// auto | no
+    pub hwdec: String,
+    /// "<id>.<property>" = value (or "<property>" for every wallpaper)
+    pub properties: BTreeMap<String, String>,
+}
+
+impl Default for WallpaperEngine {
+    fn default() -> Self {
+        Self {
+            binary: "linux-wallpaperengine".into(),
+            assets_dir: String::new(),
+            fps: 30,
+            volume: 0,
+            automute: true,
+            audio_reactive: true,
+            scaling: "fill".into(),
+            clamp: "clamp".into(),
+            mouse: true,
+            parallax: true,
+            particles: true,
+            pause: "fullscreen".into(),
+            hwdec: "auto".into(),
+            properties: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -594,6 +642,7 @@ impl Default for Config {
             ("SUPER+bracketleft", "consume-or-expel left"),
             ("SUPER+bracketright", "consume-or-expel right"),
             ("SUPER+W", "spawn fewm msg wallpaper-random"),
+            ("SUPER+ALT+W", "spawn fewm we-pick"),
             ("Print", "spawn sh -c 'grim ~/Pictures/Screenshots/$(date +%F_%T).png'"),
             ("XF86AudioRaiseVolume", "spawn wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+"),
             ("XF86AudioLowerVolume", "spawn wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),
@@ -625,6 +674,7 @@ impl Default for Config {
             animations: Animations::default(),
             gestures: Gestures::default(),
             theme: Theme::default(),
+            wallpaper_engine: WallpaperEngine::default(),
             cursor: Cursor::default(),
             misc: Misc::default(),
             binds: binds_map,
@@ -696,4 +746,4 @@ impl Config {
 }
 
 /// Paths that are free-form string maps (not structs).
-pub const DYN_MAPS: &[&str] = &["binds", "mouse_binds", "env"];
+pub const DYN_MAPS: &[&str] = &["binds", "mouse_binds", "env", "wallpaper_engine.properties"];

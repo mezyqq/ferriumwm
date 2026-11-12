@@ -71,6 +71,7 @@ fn handle_client(fe: &mut Fe, stream: UnixStream) {
         .unwrap()
         .to_string(),
         ("config", _) => serde_json::to_string(&fe.cfg).unwrap_or_default(),
+        ("we-list", _) => crate::wallpaper_engine::list_json().to_string(),
         ("events", _) | ("subscribe", _) => {
             let _ = writeln!(out, "{}", json!({"event": "hello", "workspaces": workspaces(fe)}));
             out.set_nonblocking(true).ok();

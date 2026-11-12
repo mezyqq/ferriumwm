@@ -24,6 +24,8 @@ use crate::{
 
 pub struct Loaded {
     pub path: String,
+    /// the image actually shown: the path itself, or a Wallpaper Engine preview
+    pub image_path: String,
     pub image: Option<Arc<RgbaImage>>,
     pub blurred: Option<Arc<RgbaImage>>,
     pub palette: Palette,
@@ -148,8 +150,10 @@ pub fn load_async(fe: &mut Fe, path: &str) {
     let path = path.to_string();
     fe.wallpaper.loading = true;
     std::thread::spawn(move || {
-        let p = expand_path(&path);
-        let (image, error) = if path.is_empty() {
+        // "we:<id>": FeWM shows (and takes colours from) the wallpaper's preview, the engine draws on top
+        let image_path = crate::wallpaper_engine::image_for(&path);
+        let p = expand_path(&image_path);
+        let (image, error) = if image_path.is_empty() {
             (None, None)
         } else {
             match crate::theme::load_image(&p) {
@@ -165,7 +169,7 @@ pub fn load_async(fe: &mut Fe, path: &str) {
             let radius = (cfg.theme.blur_radius / 8.0).round().max(1.0) as u32;
             Arc::new(box_blur(&small, radius, cfg.theme.blur_passes.max(1)))
         });
-        let _ = tx.send(Loaded { path, image: image.map(Arc::new), blurred, palette, error });
+        let _ = tx.send(Loaded { path, image_path, image: image.map(Arc::new), blurred, palette, error });
     });
 }
 
@@ -189,7 +193,8 @@ pub fn loaded(fe: &mut Fe, l: Loaded) {
     }
     fe.palette = l.palette;
     crate::apply_style(fe);
-    crate::theme::apply_templates(&fe.cfg, &fe.palette, &expand_path(&l.path).to_string_lossy());
+    crate::theme::apply_templates(&fe.cfg, &fe.palette, &expand_path(&l.image_path).to_string_lossy());
+    fe.we_sync();
     info!("обои: {} (основной цвет {})", l.path, fe.palette.source.hex());
     crate::ipc::event(fe, "theme-changed");
     fe.queue_redraw();

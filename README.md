@@ -25,6 +25,13 @@
   в синтаксисе matugen/noctalia (`{{colors.primary.default.hex | darken 0.1}}`).
   При первом запуске импортируются шаблоны из noctalia (gtk, qt, kitty, btop, kde, pywalfox,
   telegram, vesktop, ...).
+- **Живые обои из Wallpaper Engine (Steam)**: сцены, видео и веб-обои из Мастерской рисует
+  [linux-wallpaperengine] на фоновом слое; включаются как обычные обои — `theme.wallpaper = "we:<id>"`
+  (или `outputs[].wallpaper`), выбор с превью через `fewm we-pick` (fuzzel), `we-random`/`we-next`/`we-prev`.
+  Палитра и размытие берутся из превью обоев; в игровом режиме, на экране блокировки и под
+  полноэкранными окнами (или под любыми окнами, `pause = "windows"`) движок ставится на паузу.
+  Настройки — секция `wallpaper_engine` (FPS, звук, реакция на музыку, мышь, параллакс, частицы,
+  свойства обоев). Нужен установленный Wallpaper Engine (из него берутся assets).
 - **Хоткеи**: при первом запуске импортируются из `~/.config/niri/config.kdl`; названия действий
   niri (`focus-column-left`, `consume-or-expel-window-left`, `move-column-to-workspace 3`, ...)
   понимаются напрямую, плюс свои (`focus left`, `layout scroller`, `wallpaper-random`, ...).
@@ -39,7 +46,7 @@
 - **Многоядерность**: тяжёлые CPU-задачи (копирование фреймбуфера при скриншоте,
   построение dark/light палитры, чтение/рендер/запись шаблонов) выполняются
   параллельно по всем ядрам; кадр при этом рисуется на GPU в главном потоке.
-- IPC: `fewm msg <действие>`, `fewm msg windows|workspaces|outputs|focused|colors|events`.
+- IPC: `fewm msg <действие>`, `fewm msg windows|workspaces|outputs|focused|colors|events|we-list`.
 
 ## Запуск
 
@@ -62,3 +69,4 @@ sudo install -Dm644 resources/ferriumwm.desktop /usr/share/wayland-sessions/ferr
 - Несколько GPU (рендер на одном основном).
 
 [Smithay]: https://github.com/Smithay/smithay
+[linux-wallpaperengine]: https://github.com/Almamu/linux-wallpaperengine

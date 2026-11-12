@@ -1404,6 +1404,13 @@ impl Fe {
             "wallpaper-random" | "wallpaper-next" | "wallpaper-prev" => {
                 crate::wallpaper::cycle_wallpaper(self, name);
             }
+            "we" | "wallpaper-engine" => {
+                let r = rest.trim();
+                let r = if r.starts_with("we:") { r.to_string() } else { format!("we:{r}") };
+                crate::wallpaper::set_wallpaper(self, &r);
+            }
+            "we-random" | "we-next" | "we-prev" => self.we_cycle(name),
+            "we-restart" => self.we_restart(),
             "toggle-keyboard-shortcuts-inhibit" => {
                 self.inhibit_shortcuts = !self.inhibit_shortcuts;
                 info!("перехват хоткеев приложениями: {}", self.inhibit_shortcuts);

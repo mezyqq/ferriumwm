@@ -133,6 +133,7 @@ pub struct Fe {
     pub css_src: String,
     pub palette: Palette,
     pub wallpaper: Wallpaper,
+    pub we: crate::wallpaper_engine::Engine,
 
     pub windows: HashMap<WinId, FeWindow>,
     pub next_id: WinId,
@@ -277,6 +278,7 @@ impl Fe {
             css_src,
             palette,
             wallpaper: Wallpaper::default(),
+            we: Default::default(),
             windows: HashMap::new(),
             next_id: 1,
             outputs: Vec::new(),

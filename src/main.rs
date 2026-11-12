@@ -20,6 +20,7 @@ mod state;
 mod style;
 mod theme;
 mod wallpaper;
+mod wallpaper_engine;
 
 use std::time::Duration;
 
@@ -39,8 +40,9 @@ const HELP: &str = "FerriumWM (FeWM) — тайлинговый Wayland-комп
   fewm --nested        запустить окном внутри текущей сессии
   fewm --session       запустить на DRM/KMS (из TTY)
   fewm msg <действие>  отправить действие запущенному FeWM, например: fewm msg workspace 2
-  fewm msg windows|workspaces|outputs|focused|colors|config|events
+  fewm msg windows|workspaces|outputs|focused|colors|config|events|we-list
   fewm pick-source     выбор монитора/окна для записи (вызывает xdg-desktop-portal-wlr)
+  fewm we-pick         выбрать живые обои из Wallpaper Engine (fuzzel)
   fewm import-niri     заново импортировать хоткеи из ~/.config/niri/config.kdl
   fewm sync            перегенерировать config.py/.lua/.sh из самого свежего
   fewm check           проверить конфиги и style.css
@@ -52,6 +54,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("msg") => std::process::exit(ipc::client(&args[1..])),
         Some("pick-source") => std::process::exit(pick_source()),
+        Some("we-pick") => std::process::exit(wallpaper_engine::pick()),
         Some("-h" | "--help" | "help") => {
             println!("{HELP}");
             return;
@@ -245,6 +248,7 @@ pub fn apply_config(fe: &mut Fe, new: Config) {
     if fe.cfg.misc.xwayland && !old.misc.xwayland {
         start_xwayland(fe);
     }
+    fe.we_sync();
     fe.relayout_all();
     fe.queue_redraw();
 }
@@ -386,6 +390,7 @@ fn run(nested: bool) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let wp = fe.cfg.theme.wallpaper.clone();
     wallpaper::load_async(&mut fe, &wp);
+    wallpaper_engine::init(&mut fe);
 
     start_xwayland(&mut fe);
     if !nested {
