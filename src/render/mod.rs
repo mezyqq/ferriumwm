@@ -522,6 +522,32 @@ impl Fe {
         self.render_cache.blur_ids.retain(|k, _| ids.contains(k));
     }
 
+    /// Move the wp_presentation feedback requests of everything visible on output `oi`
+    /// into one bundle that the backend answers when this frame hits the screen.
+    pub fn take_presentation_feedback(
+        &self,
+        oi: usize,
+        states: &smithay::backend::renderer::element::RenderElementStates,
+    ) -> smithay::desktop::utils::OutputPresentationFeedback {
+        use smithay::desktop::utils::{OutputPresentationFeedback, surface_presentation_feedback_flags_from_states};
+        let o = &self.outputs[oi];
+        let output = o.output.clone();
+        let mut fb = OutputPresentationFeedback::new(&output);
+        let ws = o.ws;
+        let from = o.switch.as_ref().map(|s| s.from);
+        let on_output = |_: &_, _: &_| Some(output.clone());
+        let flags = |s: &_, _: &_| surface_presentation_feedback_flags_from_states(s, None, states);
+        for w in self.windows.values() {
+            if w.ws == ws || Some(w.ws) == from {
+                w.window.take_presentation_feedback(&mut fb, on_output, flags);
+            }
+        }
+        for l in layer_map_for_output(&output).layers() {
+            l.take_presentation_feedback(&mut fb, on_output, flags);
+        }
+        fb
+    }
+
     /// Frame callbacks + housekeeping after an output was rendered.
     pub fn post_render(&mut self, oi: usize) {
         let Some(o) = self.outputs.get(oi) else { return };

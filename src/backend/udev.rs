@@ -11,7 +11,7 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType,
+            DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata, DrmEventTime, DrmNode, NodeType,
             compositor::FrameFlags,
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
@@ -23,16 +23,18 @@ use smithay::{
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
         udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu},
     },
+    desktop::utils::OutputPresentationFeedback,
     output::{Mode as WlMode, Output, PhysicalProperties, Scale as OutScale},
     reexports::{
         calloop::{EventLoop, RegistrationToken},
         drm::control::{ModeTypeFlags, connector, crtc},
         input::{AccelProfile, Device as LiDevice, DeviceCapability, Libinput},
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         rustix::fs::OFlags,
         wayland_server::{backend::GlobalId, protocol::wl_surface::WlSurface},
     },
     utils::{DeviceFd, Transform},
-    wayland::dmabuf::DmabufFeedbackBuilder,
+    wayland::{dmabuf::DmabufFeedbackBuilder, presentation::Refresh},
 };
 use smithay_drm_extras::{
     display_info,
@@ -47,8 +49,12 @@ use crate::{
     state::{Backend, Fe},
 };
 
-type Manager = DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
-type Out = DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
+/// Per-frame user data: wp_presentation feedback of the surfaces in that frame, answered
+/// on its vblank. Clients like Chromium take their frame interval from it and assume
+/// 60 Hz without it.
+type FrameData = Option<OutputPresentationFeedback>;
+type Manager = DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, FrameData, DrmDeviceFd>;
+type Out = DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, FrameData, DrmDeviceFd>;
 
 struct Surface {
     output: Output,
@@ -232,8 +238,8 @@ fn device_added(fe: &mut Fe, node: DrmNode, path: &Path) -> anyhow::Result<()> {
 
     let token = fe
         .lh
-        .insert_source(notifier, move |ev, _meta, fe| match ev {
-            DrmEvent::VBlank(crtc) => vblank(fe, node, crtc),
+        .insert_source(notifier, move |ev, meta, fe| match ev {
+            DrmEvent::VBlank(crtc) => vblank(fe, node, crtc, meta.as_ref()),
             DrmEvent::Error(e) => error!("drm: {e:?}"),
         })
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -421,11 +427,37 @@ fn connector_disconnected(fe: &mut Fe, node: DrmNode, crtc: crtc::Handle) {
     fe.queue_redraw();
 }
 
-fn vblank(fe: &mut Fe, node: DrmNode, crtc: crtc::Handle) {
+fn vblank(fe: &mut Fe, node: DrmNode, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>) {
+    let now = fe.clock.now();
     let Some(u) = fe.backend_udev() else { return };
     let Some(s) = u.gpus.get_mut(&node).and_then(|g| g.surfaces.get_mut(&crtc)) else { return };
-    if let Err(e) = s.drm.frame_submitted() {
-        warn!("frame_submitted: {e:?}");
+    match s.drm.frame_submitted() {
+        Ok(data) => {
+            if let Some(mut feedback) = data.flatten() {
+                let hw_time = meta.and_then(|m| match m.time {
+                    DrmEventTime::Monotonic(t) => Some(t),
+                    DrmEventTime::Realtime(_) => None,
+                });
+                let (time, flags) = match hw_time {
+                    Some(t) => (
+                        t.into(),
+                        wp_presentation_feedback::Kind::Vsync
+                            | wp_presentation_feedback::Kind::HwClock
+                            | wp_presentation_feedback::Kind::HwCompletion,
+                    ),
+                    None => (now, wp_presentation_feedback::Kind::Vsync),
+                };
+                let refresh = s
+                    .output
+                    .current_mode()
+                    .filter(|m| m.refresh > 0)
+                    .map(|m| Refresh::fixed(std::time::Duration::from_secs_f64(1000.0 / m.refresh as f64)))
+                    .unwrap_or(Refresh::Unknown);
+                let seq = meta.map(|m| m.sequence as u64).unwrap_or(0);
+                feedback.presented(time, refresh, seq, flags);
+            }
+        }
+        Err(e) => warn!("frame_submitted: {e:?}"),
     }
     s.pending = false;
     s.pending_since = None;
@@ -513,7 +545,8 @@ fn render(fe: &mut Fe, node: DrmNode, crtc: crtc::Handle) {
     match s.drm.render_frame(renderer, &elements, [0.0, 0.0, 0.0, 1.0], flags) {
         Ok(res) => {
             if !res.is_empty {
-                match s.drm.queue_frame(()) {
+                let feedback = fe.take_presentation_feedback(oi, &res.states);
+                match s.drm.queue_frame(Some(feedback)) {
                     Ok(()) => {
                         s.pending = true;
                         s.pending_since = Some(Instant::now());
