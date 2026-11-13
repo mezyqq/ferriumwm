@@ -98,6 +98,7 @@ pub const DOCS: &[(&str, &str)] = &[
     ("wallpaper_engine.pause", "Пауза: fullscreen — когда экран закрыт полноэкранным окном | windows — когда на столе есть окна | never. В игровом режиме обои стоят всегда"),
     ("wallpaper_engine.hwdec", "Аппаратное декодирование видео-обоев: auto | no"),
     ("wallpaper_engine.properties", "Настройки обоев: [\"<id>.<свойство>\"] = значение (список свойств: linux-wallpaperengine --list-properties <id>)"),
+    ("wallpaper_engine.follow_steam_app", "Обои, выбранные в самом приложении Wallpaper Engine (Steam/Proton), сразу ставятся на рабочий стол"),
     ("cursor", "Курсор"),
     ("cursor.theme", "Тема курсора (пусто — XCURSOR_THEME/default)"),
     ("cursor.size", "Размер курсора"),

@@ -426,6 +426,7 @@ impl Fe {
             }
         }
         ptr.motion(self, under, &MotionEvent { location: pos, serial: SERIAL_COUNTER.next_serial(), time });
+        self.we_cursor(pos);
         self.cursor.last_move = Instant::now();
         self.queue_redraw();
     }

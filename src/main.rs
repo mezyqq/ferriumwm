@@ -366,7 +366,10 @@ fn run(nested: bool) -> anyhow::Result<()> {
                     }
                     SyncEvent::Error(e) => notify(fe, "FerriumWM: ошибка в конфиге", &e),
                     SyncEvent::Wallpaper(path) => {
-                        if path != fe.cfg.theme.wallpaper && !path.is_empty() {
+                        // our own "we:" preview handed to noctalia (sync_noctalia) isn't a new pick
+                        let ours = wallpaper_engine::noctalia_image_for(&fe.cfg.theme.wallpaper)
+                            .is_some_and(|p| p.to_string_lossy() == path.as_str());
+                        if path != fe.cfg.theme.wallpaper && !path.is_empty() && !ours {
                             info!("noctalia сменила обои → {path}");
                             wallpaper::set_wallpaper(fe, &path);
                         }

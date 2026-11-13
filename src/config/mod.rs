@@ -263,6 +263,8 @@ pub struct WallpaperEngine {
     pub hwdec: String,
     /// "<id>.<property>" = value (or "<property>" for every wallpaper)
     pub properties: BTreeMap<String, String>,
+    /// apply the wallpaper picked in the Wallpaper Engine app itself (running through Proton)
+    pub follow_steam_app: bool,
 }
 
 impl Default for WallpaperEngine {
@@ -282,6 +284,7 @@ impl Default for WallpaperEngine {
             pause: "fullscreen".into(),
             hwdec: "auto".into(),
             properties: BTreeMap::new(),
+            follow_steam_app: true,
         }
     }
 }

@@ -162,6 +162,8 @@ pub fn load_async(fe: &mut Fe, path: &str) {
             }
         };
         let palette = crate::theme::palette_for(&cfg, image.as_ref());
+        // the same wallpaper in noctalia, so its palette (bar, launcher, its templates) matches ours
+        crate::wallpaper_engine::sync_noctalia(&path, image.as_ref());
         let blurred = image.as_ref().map(|img| {
             // downscale ~8x then blur; the GPU upscales with linear filtering
             let (w, h) = img.dimensions();

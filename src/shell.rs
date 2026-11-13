@@ -1211,8 +1211,18 @@ impl Fe {
                 self.spawn(&t)
             }
             "close" | "close-window" | "killactive" => {
-                if let Some(f) = focus {
+                // "close-window <id>" — окно по id из `fewm msg windows` (PCLink), без id — текущее
+                let target = a0.parse::<WinId>().ok().filter(|i| self.windows.contains_key(i)).or(focus);
+                if let Some(f) = target {
                     self.close(f)
+                }
+            }
+            "focus-window" | "focuswindow" => {
+                // "focus-window <id>": переключает воркспейс окна и фокусирует его (PCLink)
+                if let Ok(i) = a0.parse::<WinId>() {
+                    if self.windows.contains_key(&i) {
+                        self.focus_window(Some(i), true)
+                    }
                 }
             }
             "exit" | "quit" => {

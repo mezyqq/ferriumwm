@@ -139,7 +139,7 @@ fn watcher(tx: Sender<SyncEvent>) {
     let dir = configs_dir();
     let style = style_path();
     let noctalia = super::home().join(".local/state/noctalia/settings.toml");
-    let mut last_wallpaper = String::new();
+    let mut last_wallpaper: String;
     let mut seen: HashMap<PathBuf, Option<(SystemTime, u64)>> = HashMap::new();
     let mut ours: HashMap<Lang, u64> = HashMap::new();
     for lang in ALL {
@@ -150,6 +150,10 @@ fn watcher(tx: Sender<SyncEvent>) {
         }
     }
     seen.insert(style.clone(), mtime(&style));
+    // only a wallpaper changed in noctalia later counts: at startup our own config wins
+    // (otherwise noctalia's image replaced a "we:" wallpaper on every login)
+    seen.insert(noctalia.clone(), mtime(&noctalia));
+    last_wallpaper = crate::theme::noctalia_wallpaper().map(|w| w.0).unwrap_or_default();
 
     loop {
         std::thread::sleep(Duration::from_millis(250));

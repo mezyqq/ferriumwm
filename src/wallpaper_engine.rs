@@ -6,12 +6,16 @@
 //!
 //! A wallpaper is chosen like any other: theme.wallpaper / outputs[].wallpaper = "we:<id>",
 //! where <id> is a Workshop id, a built-in project folder name or a path to a project folder.
+//! Picking a wallpaper in the Wallpaper Engine app itself (Proton) works too: FeWM watches the app's
+//! config.json and applies its selection. The cursor position is published to the engine through a
+//! small file (FEWM_CURSOR_FILE), so wallpapers follow the mouse over windows too, like on Windows.
 
 use std::collections::VecDeque;
+use std::os::unix::fs::FileExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::Value;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -131,6 +135,51 @@ pub fn list_items() -> Vec<Item> {
 
 /// The image FeWM itself shows / takes colours from for a wallpaper setting: the preview of a
 /// Wallpaper Engine wallpaper, otherwise the path as is.
+/// The PNG noctalia gets for a "we:" wallpaper (the preview's first frame: noctalia then builds the
+/// same palette as FeWM for the bar, the launcher and its own app templates).
+pub fn noctalia_image_for(wallpaper: &str) -> Option<PathBuf> {
+    let r = parse_ref(wallpaper)?;
+    let name: String = r.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    Some(crate::config::home().join(format!(".cache/FerriumWM/we-preview/{name}.png")))
+}
+
+/// Tell noctalia about the wallpaper (on a worker thread, after the image is decoded).
+pub fn sync_noctalia(wallpaper: &str, image: Option<&image::RgbaImage>) {
+    // a nested test instance must not touch the host session's shell
+    if std::env::var_os("FEWM_NO_TEMPLATES").is_some() {
+        return;
+    }
+    let target = match noctalia_image_for(wallpaper) {
+        Some(png) => {
+            let Some(img) = image else { return };
+            if !png.is_file() {
+                let _ = std::fs::create_dir_all(png.parent().unwrap());
+                let tmp = png.with_extension("tmp.png");
+                if let Err(e) = img.save(&tmp).and_then(|_| std::fs::rename(&tmp, &png).map_err(Into::into)) {
+                    warn!("wallpaper engine: превью для noctalia {}: {e}", png.display());
+                    return;
+                }
+            }
+            png
+        }
+        None => crate::config::expand_path(wallpaper),
+    };
+    let target = target.to_string_lossy().into_owned();
+    if target.is_empty() || crate::theme::noctalia_wallpaper().is_some_and(|(cur, _, _)| cur == target) {
+        return;
+    }
+    let ok = Command::new("noctalia")
+        .args(["msg", "wallpaper-set", &target])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if ok {
+        info!("noctalia: обои → {target}");
+    }
+}
+
 pub fn image_for(wallpaper: &str) -> String {
     match parse_ref(wallpaper) {
         Some(r) => find_item(&r).and_then(|i| i.preview).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -145,6 +194,152 @@ fn find_assets(cfg_dir: &str) -> Option<PathBuf> {
     steam_libraries().into_iter().map(|l| l.join("steamapps/common/wallpaper_engine/assets")).find(|p| p.is_dir())
 }
 
+// ---------------------------------------------------------------- the Wallpaper Engine app (Proton)
+
+/// The app's config.json (it lives next to wallpaper64.exe).
+fn app_config() -> Option<PathBuf> {
+    steam_libraries().into_iter().map(|l| l.join("steamapps/common/wallpaper_engine/config.json")).find(|p| p.is_file())
+}
+
+/// "S:/steamapps/workshop/content/431960/123/project.json" → a Linux path, through the drive letters
+/// of the app's Proton prefix (any library may hold the prefix).
+fn wine_to_linux(p: &str) -> Option<PathBuf> {
+    let p = p.replace('\\', "/");
+    if p.starts_with('/') {
+        return Some(PathBuf::from(p));
+    }
+    let (drive, rest) = p.split_once(':')?;
+    if drive.len() != 1 {
+        return None;
+    }
+    let letter = format!("{}:", drive.to_ascii_lowercase());
+    steam_libraries().into_iter().find_map(|l| {
+        let d = l.join(format!("steamapps/compatdata/{APP_ID}/pfx/dosdevices")).join(&letter);
+        let root = d.canonicalize().ok()?;
+        Some(root.join(rest.trim_start_matches('/')))
+    })
+}
+
+/// What the app shows on its first monitor, as a "we:" reference.
+fn app_selection(cfg: &Path) -> Option<String> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(cfg).ok()?).ok()?;
+    let mut picks: Vec<(String, String)> = Vec::new();
+    for user in v.as_object()?.values() {
+        let Some(sel) = user.pointer("/general/wallpaperconfig/selectedwallpapers").and_then(|s| s.as_object()) else { continue };
+        for (mon, w) in sel {
+            if let Some(f) = w.get("file").and_then(|f| f.as_str()).filter(|f| !f.is_empty()) {
+                picks.push((mon.clone(), f.to_string()));
+            }
+        }
+    }
+    picks.sort();
+    app_ref(&picks.first()?.1)
+}
+
+/// A wallpaper file as the app names it ("S:/steamapps/workshop/content/431960/<id>/project.json",
+/// ".../scene.pkg", ...) → a "we:" reference.
+fn app_ref(file: &str) -> Option<String> {
+    let path = wine_to_linux(file)?;
+    let dir = if path.is_dir() { path } else { path.parent()?.to_path_buf() };
+    let id = dir.file_name()?.to_string_lossy().into_owned();
+    // Workshop items by id (that is what we-pick and the config use), anything else by path
+    if dir.parent().and_then(|p| p.file_name()).is_some_and(|n| n == APP_ID) {
+        return Some(format!("we:{id}"));
+    }
+    dir.join("project.json").is_file().then(|| format!("we:{}", dir.display()))
+}
+
+/// Port the app's UI reports picks to (see patch_ui).
+const UI_PORT: u16 = 47431;
+const UI_MARK: &str = "/*FEWM*/";
+
+fn ui_script() -> Option<PathBuf> {
+    steam_libraries()
+        .into_iter()
+        .map(|l| l.join("steamapps/common/wallpaper_engine/ui/dist/scripts/scripts.js"))
+        .find(|p| p.is_file())
+}
+
+/// Under Proton the app can't put a wallpaper on the desktop, so it never even saves the pick.
+/// Its UI is a web page: next to its native selectWallpaper(file, monitor) call add a request to
+/// FeWM with the same arguments. The original file is kept as scripts.js.fewm-orig; a Steam update
+/// brings back the unpatched file and this runs again.
+fn patch_ui(p: &Path) -> Result<bool, String> {
+    let s = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    if s.contains(UI_MARK) {
+        return Ok(false);
+    }
+    let needle = r#".callDeferred("browseWallpaperObject","selectWallpaper","#;
+    let i = s.find(needle).ok_or("нет вызова selectWallpaper (новая версия интерфейса?)")?;
+    let start = s[..i].rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')).map(|k| k + 1).unwrap_or(0);
+    let mut args = s[i + needle.len()..].splitn(3, ',');
+    let file = args.next().filter(|a| !a.is_empty() && !a.contains(['(', ')'])).ok_or("не разобрал аргументы")?;
+    let mon = args.next().filter(|a| !a.is_empty() && !a.contains(['(', ')'])).ok_or("не разобрал аргументы")?;
+    let hook = format!(
+        "{UI_MARK}(function(f,m){{try{{(new Image).src=\"http://127.0.0.1:{UI_PORT}/fewm-select?m=\"+encodeURIComponent(m)+\"&f=\"+encodeURIComponent(f)}}catch(x){{}}}})({file},{mon}),"
+    );
+    let out = format!("{}{hook}{}", &s[..start], &s[start..]);
+    let _ = std::fs::write(p.with_file_name("scripts.js.fewm-orig"), &s);
+    std::fs::write(p, out).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+fn url_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if b[i] == b'+' { b' ' } else { b[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Tiny HTTP listener for the patched UI: GET /fewm-select?m=<monitor>&f=<file> → the file.
+fn ui_listener(tx: smithay::reexports::calloop::channel::Sender<String>) {
+    use std::io::{Read, Write};
+    let l = match std::net::TcpListener::bind(("127.0.0.1", UI_PORT)) {
+        Ok(l) => l,
+        Err(e) => {
+            // a nested test instance next to the session: the session has it
+            info!("wallpaper engine: порт {UI_PORT} занят ({e}), выбор в приложении не слушаю");
+            return;
+        }
+    };
+    std::thread::Builder::new()
+        .name("we-ui".into())
+        .spawn(move || {
+            for c in l.incoming().flatten() {
+                let mut c = c;
+                let _ = c.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buf = [0u8; 8192];
+                let n = c.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req.lines().next().and_then(|l| l.split(' ').nth(1)).unwrap_or("");
+                let _ = c.write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+                if let Some(q) = path.strip_prefix("/fewm-select?") {
+                    if let Some(f) = q.split('&').find_map(|kv| kv.strip_prefix("f=")) {
+                        if tx.send(url_decode(f)).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+        .ok();
+}
+
+fn mtime(p: &Path) -> Option<SystemTime> {
+    std::fs::metadata(p).and_then(|m| m.modified()).ok()
+}
+
 // ---------------------------------------------------------------- the engine process
 
 #[derive(Default)]
@@ -157,6 +352,13 @@ pub struct Engine {
     failed: Option<Vec<String>>,
     assets: Option<(String, Option<PathBuf>)>,
     warned_assets: bool,
+    /// FEWM_CURSOR_FILE: the global cursor position (two f64, logical layout coords) for the engine
+    cursor: Option<(PathBuf, std::fs::File)>,
+    /// the Wallpaper Engine app's config.json and its last seen mtime / selection
+    app_cfg: Option<(PathBuf, Option<SystemTime>)>,
+    app_selection: Option<String>,
+    /// the app's UI script and its mtime when last checked / patched
+    ui: Option<(PathBuf, Option<SystemTime>)>,
 }
 
 impl Engine {
@@ -295,6 +497,9 @@ impl Fe {
         c.env("XDG_SESSION_TYPE", "wayland");
         c.env("XDG_CURRENT_DESKTOP", "FerriumWM");
         c.env_remove("DISPLAY");
+        if let Some(path) = self.we_cursor_file() {
+            c.env("FEWM_CURSOR_FILE", path);
+        }
         c.stdin(Stdio::null());
         match out.as_ref().and_then(|f| f.try_clone().ok().zip(f.try_clone().ok())) {
             Some((o, e)) => {
@@ -358,6 +563,7 @@ impl Fe {
     }
 
     fn we_tick(&mut self) {
+        self.we_follow_app();
         // crashed?
         let exited = self.we.child.as_mut().and_then(|c| c.try_wait().ok().flatten());
         if let Some(status) = exited {
@@ -383,6 +589,104 @@ impl Fe {
         if self.we.child.is_some() && hide != self.we.paused {
             self.we.signal(if hide { libc::SIGSTOP } else { libc::SIGCONT });
             self.we.paused = hide;
+        }
+    }
+
+    /// The cursor file, created on first use; filled with the current cursor position.
+    fn we_cursor_file(&mut self) -> Option<PathBuf> {
+        if self.we.cursor.is_none() {
+            let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+            let path = dir.join(format!("fewm-we-cursor-{}", self.socket_name));
+            match std::fs::OpenOptions::new().create(true).truncate(true).read(true).write(true).open(&path) {
+                Ok(f) => self.we.cursor = Some((path, f)),
+                Err(e) => {
+                    warn!("wallpaper engine: курсор-файл {}: {e}", path.display());
+                    return None;
+                }
+            }
+            if let Some(p) = self.seat.get_pointer() {
+                self.we_cursor(p.current_location());
+            }
+        }
+        self.we.cursor.as_ref().map(|(p, _)| p.clone())
+    }
+
+    /// Called on every pointer move: tell the engine where the cursor is (also over windows).
+    pub fn we_cursor(&mut self, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
+        if let Some((_, f)) = &self.we.cursor {
+            let mut buf = [0u8; 16];
+            buf[..8].copy_from_slice(&pos.x.to_ne_bytes());
+            buf[8..].copy_from_slice(&pos.y.to_ne_bytes());
+            let _ = f.write_at(&buf, 0);
+        }
+    }
+
+    /// Keep the app's UI hooked (patch_ui); rechecked whenever its script changes.
+    fn we_patch_ui(&mut self) {
+        if self.we.ui.is_none() {
+            let Some(p) = ui_script() else { return };
+            self.we.ui = Some((p, None));
+        }
+        let Some((p, seen)) = self.we.ui.clone() else { return };
+        let now = mtime(&p);
+        if now == seen {
+            return;
+        }
+        match patch_ui(&p) {
+            Ok(true) => info!("wallpaper engine: интерфейс приложения подключён ({}), открой его окно заново", p.display()),
+            Ok(false) => {}
+            Err(e) => {
+                warn!("wallpaper engine: не подключил интерфейс приложения: {e}");
+                crate::notify(self, "Wallpaper Engine", &format!("Не подключился к приложению: {e}"));
+            }
+        }
+        self.we.ui = Some((p.clone(), mtime(&p)));
+    }
+
+    /// A pick reported by the app's UI.
+    fn we_app_pick(&mut self, file: &str) {
+        if !self.cfg.wallpaper_engine.follow_steam_app {
+            return;
+        }
+        let Some(r) = app_ref(file) else {
+            warn!("wallpaper engine: не нашёл обои из приложения: {file}");
+            return;
+        };
+        self.we.app_selection = Some(r.clone());
+        if r != self.cfg.theme.wallpaper {
+            info!("wallpaper engine: выбрано в приложении: {r}");
+            crate::wallpaper::set_wallpaper(self, &r);
+        }
+    }
+
+    /// A wallpaper picked in the Wallpaper Engine app → our wallpaper.
+    fn we_follow_app(&mut self) {
+        if !self.cfg.wallpaper_engine.follow_steam_app {
+            return;
+        }
+        self.we_patch_ui();
+        if self.we.app_cfg.is_none() {
+            // remember the current state; only later changes are applied
+            let Some(p) = app_config() else { return };
+            self.we.app_selection = app_selection(&p);
+            self.we.app_cfg = Some((p.clone(), mtime(&p)));
+            return;
+        }
+        let Some((path, seen)) = self.we.app_cfg.clone() else { return };
+        let now = mtime(&path);
+        if now == seen {
+            return;
+        }
+        self.we.app_cfg = Some((path.clone(), now));
+        let sel = app_selection(&path);
+        if sel.is_none() || sel == self.we.app_selection {
+            return;
+        }
+        self.we.app_selection = sel.clone();
+        let sel = sel.unwrap();
+        if sel != self.cfg.theme.wallpaper {
+            info!("wallpaper engine: выбрано в приложении: {sel}");
+            crate::wallpaper::set_wallpaper(self, &sel);
         }
     }
 
@@ -423,6 +727,13 @@ impl Fe {
 }
 
 pub fn init(fe: &mut Fe) {
+    let (tx, rx) = smithay::reexports::calloop::channel::channel::<String>();
+    let _ = fe.lh.insert_source(rx, |ev, _, fe| {
+        if let smithay::reexports::calloop::channel::Event::Msg(file) = ev {
+            fe.we_app_pick(&file);
+        }
+    });
+    ui_listener(tx);
     let _ = fe.lh.insert_source(Timer::from_duration(Duration::from_millis(300)), |_, _, fe| {
         fe.we_tick();
         TimeoutAction::ToDuration(Duration::from_millis(400))
@@ -486,4 +797,50 @@ pub fn pick() -> i32 {
     let Some(idx) = String::from_utf8_lossy(&out.stdout).trim().parse::<usize>().ok() else { return 1 };
     let Some(it) = items.get(idx) else { return 1 };
     crate::ipc::client(&["wallpaper".to_string(), format!("we:{}", it.id)])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn patch_ui_real_script() {
+        let Some(orig) = ui_script().map(|p| p.with_file_name("scripts.js.fewm-orig")).filter(|p| p.is_file()) else { return };
+        let dir = std::env::temp_dir().join(format!("fewm-ui-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("scripts.js");
+        std::fs::copy(&orig, &p).unwrap();
+        assert_eq!(patch_ui(&p), Ok(true));
+        assert_eq!(patch_ui(&p), Ok(false));
+        let s = std::fs::read_to_string(&p).unwrap();
+        assert!(s.contains(r#"/*FEWM*/(function(f,m){try{(new Image).src="http://127.0.0.1:47431/fewm-select?m="+encodeURIComponent(m)+"&f="+encodeURIComponent(f)}catch(x){}})(e.file,t),F.callDeferred("browseWallpaperObject","selectWallpaper",e.file,t,"#), "{}", &s[s.find("/*FEWM*/").unwrap()-40..s.find("/*FEWM*/").unwrap()+300]);
+        let _ = std::fs::remove_dir_all(&dir);
+        // the pick from the real app
+        assert_eq!(app_ref("S:/steamapps/workshop/content/431960/3793885664/gifscene.pkg").as_deref(), Some("we:3793885664"));
+    }
+
+    #[test]
+    fn url_decode_works() {
+        assert_eq!(url_decode("S%3A%2Fsteamapps%2Fa%20b+c%2"), "S:/steamapps/a b c%2");
+    }
+
+    #[test]
+    fn app_selection_formats() {
+        let dir = std::env::temp_dir().join(format!("fewm-we-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("config.json");
+        // what the app writes (Windows paths through the Proton drive letters)
+        let Some(lib) = steam_libraries().into_iter().find(|l| l.join(format!("steamapps/workshop/content/{APP_ID}")).is_dir()) else { return };
+        let ws = lib.join(format!("steamapps/workshop/content/{APP_ID}"));
+        let Some(item) = std::fs::read_dir(&ws).unwrap().flatten().map(|e| e.path()).find(|p| p.join("project.json").is_file()) else { return };
+        let id = item.file_name().unwrap().to_string_lossy().into_owned();
+        let json = format!(
+            r#"{{"steamuser":{{"general":{{"wallpaperconfig":{{"selectedwallpapers":{{"Monitor0":{{"file":"S:/steamapps/workshop/content/{APP_ID}/{id}/project.json"}}}}}}}}}}}}"#
+        );
+        std::fs::write(&cfg, json).unwrap();
+        assert_eq!(app_selection(&cfg), Some(format!("we:{id}")));
+        std::fs::write(&cfg, r#"{"steamuser":{"general":{"wallpaperconfig":{"selectedwallpapers":null}}}}"#).unwrap();
+        assert_eq!(app_selection(&cfg), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
