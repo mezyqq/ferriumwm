@@ -8,6 +8,7 @@ mod game;
 mod config;
 mod cursor;
 mod drag;
+mod physics;
 mod input;
 mod ipc;
 mod layout;

@@ -232,7 +232,7 @@ impl Fe {
             .layout
             .windows()
             .into_iter()
-            .filter(|id| self.windows.get(id).is_some_and(|w| w.mapped && !w.fullscreen))
+            .filter(|id| self.windows.get(id).is_some_and(|w| w.mapped && !w.fullscreen && !w.floating))
             .collect();
         // focused tiled window above other tiled (for animations overlapping)
         if let Some(f) = self.focus {

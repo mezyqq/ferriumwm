@@ -3,7 +3,10 @@
 //! or holding it at the top/bottom screen edge) and is dropped into the layout
 //! of whatever workspace is shown on release.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     reexports::calloop::timer::{TimeoutAction, Timer},
@@ -29,6 +32,8 @@ pub struct Drag {
     /// so a stale timer does nothing
     edge: Option<(i32, u64)>,
     edge_gen: u64,
+    /// recent cursor positions, for the speed a window is thrown with
+    samples: VecDeque<(Instant, Point<f64, Logical>)>,
 }
 
 impl Drag {
@@ -37,7 +42,32 @@ impl Drag {
         let ly = pos.y - out_origin.y;
         let fx = ((lx - visual.x) / visual.w.max(1.0)).clamp(0.0, 1.0);
         let fy = ((ly - visual.y) / visual.h.max(1.0)).clamp(0.0, 1.0);
-        Self { id, fx, fy, pos, tiled, edge: None, edge_gen: 0 }
+        Self { id, fx, fy, pos, tiled, edge: None, edge_gen: 0, samples: VecDeque::from([(Instant::now(), pos)]) }
+    }
+
+    fn sample(&mut self, pos: Point<f64, Logical>) {
+        let now = Instant::now();
+        self.samples.push_back((now, pos));
+        while self.samples.len() > 2 && self.samples.front().is_some_and(|(t, _)| now - *t > Duration::from_millis(120)) {
+            self.samples.pop_front();
+        }
+    }
+
+    /// Cursor speed over the last ~80 ms, px/s; 0 when the mouse stopped
+    /// before letting go.
+    pub fn velocity(&self, now: Instant) -> (f64, f64) {
+        let Some(&(t1, p1)) = self.samples.back() else { return (0.0, 0.0) };
+        if now.saturating_duration_since(t1) > Duration::from_millis(60) {
+            return (0.0, 0.0);
+        }
+        let Some(&(t0, p0)) = self.samples.iter().find(|(t, _)| t1.saturating_duration_since(*t) <= Duration::from_millis(80)) else {
+            return (0.0, 0.0);
+        };
+        let dt = t1.saturating_duration_since(t0).as_secs_f64();
+        if dt < 0.004 {
+            return (0.0, 0.0);
+        }
+        ((p1.x - p0.x) / dt, (p1.y - p0.y) / dt)
     }
 
     fn rect_in(&self, out_origin: Point<f64, Logical>, size: (f64, f64)) -> RectF {
@@ -63,6 +93,7 @@ impl Fe {
     pub fn drag_motion(&mut self, pos: Point<f64, Logical>) {
         let Some(d) = self.drag.as_mut() else { return };
         d.pos = pos;
+        d.sample(pos);
         let delay = self.cfg.general.drag_edge_switch_ms;
         let dir = match self.output_at(pos).and_then(|oi| self.output_geo(oi)) {
             Some(g) if delay > 0 => {
@@ -139,6 +170,8 @@ impl Fe {
         let Some(d) = self.drag.take() else { return };
         self.queue_redraw();
         if !d.tiled {
+            // sandbox: the window flies on with the speed of the hand
+            self.physics_throw(d.id, d.velocity(Instant::now()));
             return;
         }
         let Some(w) = self.windows.get(&d.id) else { return };

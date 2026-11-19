@@ -85,6 +85,7 @@ pub struct Config {
     pub gestures: Gestures,
     pub theme: Theme,
     pub wallpaper_engine: WallpaperEngine,
+    pub physics: Physics,
     pub cursor: Cursor,
     pub misc: Misc,
     pub binds: BTreeMap<String, String>,
@@ -285,6 +286,54 @@ impl Default for WallpaperEngine {
             hwdec: "auto".into(),
             properties: BTreeMap::new(),
             follow_steam_app: true,
+        }
+    }
+}
+
+/// Sandbox mode (action `physics`, Super+B): windows become physical bodies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Physics {
+    /// tiled windows shrink to this fraction when they leave the layout
+    pub shrink: f64,
+    /// speed (px/s) windows pop apart with when the sandbox opens, 0 = stay put
+    pub pop: f64,
+    /// px/s²
+    pub gravity: f64,
+    /// air drag, 1/s
+    pub drag: f64,
+    /// 0..1, how much speed survives a bounce
+    pub bounce: f64,
+    /// drag and bounce without gravity (double tap): billiards in space
+    pub space_drag: f64,
+    pub space_bounce: f64,
+    /// in zero gravity windows lose speed (space_drag, space_bounce, friction);
+    /// off = perfectly elastic, they fly until caught
+    pub space_inertia_loss: bool,
+    /// second press of the bind within this switches to zero gravity
+    pub double_tap_ms: u32,
+    /// friction against the floor and other windows, 1/s
+    pub friction: f64,
+    pub collisions: bool,
+    /// multiplier for the speed of a thrown window
+    pub throw: f64,
+}
+
+impl Default for Physics {
+    fn default() -> Self {
+        Self {
+            shrink: 0.6,
+            pop: 700.0,
+            gravity: 3200.0,
+            drag: 0.9,
+            bounce: 0.7,
+            space_drag: 0.12,
+            space_bounce: 0.95,
+            space_inertia_loss: false,
+            double_tap_ms: 350,
+            friction: 4.0,
+            collisions: true,
+            throw: 1.0,
         }
     }
 }
@@ -620,6 +669,9 @@ impl Default for Config {
             ("CTRL+SHIFT+F", "game-mode"),
             ("SUPER+M", "maximize"),
             ("SUPER+V", "toggle-float"),
+            ("SUPER+B", "physics"),
+            ("SUPER+SHIFT+B", "physics gravity"),
+            ("SUPER+CTRL+B", "physics shake"),
             ("SUPER+C", "center"),
             ("SUPER+P", "pseudo"),
             ("SUPER+J", "toggle-split"),
@@ -678,6 +730,7 @@ impl Default for Config {
             gestures: Gestures::default(),
             theme: Theme::default(),
             wallpaper_engine: WallpaperEngine::default(),
+            physics: Physics::default(),
             cursor: Cursor::default(),
             misc: Misc::default(),
             binds: binds_map,

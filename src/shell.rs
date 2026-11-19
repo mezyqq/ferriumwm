@@ -336,6 +336,10 @@ impl Fe {
         let move_p = self.anim(&self.cfg.animations.windows_move);
         let mut targets: Vec<(WinId, RectF)> = Vec::new();
         for (id, r) in rects {
+            // sandbox bodies keep their layout slot but live at float_rect
+            if self.windows.get(&id).is_some_and(|w| w.floating) {
+                continue;
+            }
             targets.push((id, r));
         }
         let floating: Vec<WinId> = self.windows.values().filter(|w| w.ws == ws && w.floating).map(|w| w.id).collect();
@@ -1427,6 +1431,7 @@ impl Fe {
             }
             "screenshot" | "screenshot-screen" | "screenshot-window" => crate::screenshot::take(self, name),
             "game-mode" | "gaming-mode" | "toggle-game-mode" => self.toggle_game_mode(),
+            "physics" | "sandbox" => self.physics_action(&args),
             "toggle-overview" | "overview" => {
                 // Overview: temporarily switch to the scroller view of all windows isn't implemented yet;
                 // show the next workspace grid via layout toggle instead of doing nothing.
@@ -1491,7 +1496,7 @@ impl Fe {
 
     /// Advance animations; returns true while anything is still moving.
     pub fn tick_animations(&mut self, now: Instant) -> bool {
-        let mut busy = false;
+        let mut busy = self.tick_physics(now);
         for w in self.windows.values_mut() {
             busy |= w.rect.animating(now);
             if let Some(o) = &w.open {

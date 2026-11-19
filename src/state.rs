@@ -145,6 +145,8 @@ pub struct Fe {
     pub closing: Vec<crate::closing::Closing>,
     /// window being dragged with the mouse (Super+LMB)
     pub drag: Option<crate::drag::Drag>,
+    /// sandbox mode: windows as physical bodies (Super+B)
+    pub physics: crate::physics::Physics,
     pub game: Option<crate::game::GameMode>,
     pub layer_states: HashMap<smithay::reexports::wayland_server::backend::ObjectId, (bool, smithay::wayland::shell::wlr_layer::KeyboardInteractivity)>,
 
@@ -287,6 +289,7 @@ impl Fe {
             layer_focus: None,
             closing: Vec::new(),
             drag: None,
+            physics: Default::default(),
             game: None,
             layer_states: HashMap::new(),
             cursor,
